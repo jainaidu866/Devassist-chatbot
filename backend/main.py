@@ -1,7 +1,6 @@
 """
 main.py — DevAssist Chatbot Backend
-FastAPI + WebSocket + Groq streaming + RAG + Serves Vue Frontend
-Matches SRS v1.0 exactly (sections 3, 4, 5)
+FastAPI + WebSocket + Groq streaming + RAG + Q&A Generation + Serves Vue Frontend
 """
 
 import os
@@ -18,7 +17,7 @@ from groq import Groq, RateLimitError
 
 import rag
 
-# ── Load environment variables from .env ────────────────────────────────────
+# ── Load environment variables ───────────────────────────────────────────────
 load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 if not GROQ_API_KEY:
@@ -26,7 +25,7 @@ if not GROQ_API_KEY:
 
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# ── SRS 3.2: Required system prompt — strict programming-only policy ─────────
+# ── System prompt (SRS 3.2) ──────────────────────────────────────────────────
 SYSTEM_PROMPT = (
     "You are a helpful coding assistant. "
     "You strictly answer questions related to software engineering, algorithms, "
@@ -36,15 +35,24 @@ SYSTEM_PROMPT = (
     "When answering, use markdown formatting with proper code blocks and syntax highlighting."
 )
 
-# ── Allowed file extensions (SRS 3.3) ────────────────────────────────────────
+# ── Q&A Generation prompt ────────────────────────────────────────────────────
+QA_SYSTEM_PROMPT = """You are a document analysis expert. 
+Your job is to read the given text and generate meaningful question and answer pairs from it.
+Generate exactly 3 question-answer pairs.
+Return ONLY a valid JSON array in this exact format, nothing else:
+[
+  {"question": "...", "answer": "..."},
+  {"question": "...", "answer": "..."},
+  {"question": "...", "answer": "..."}
+]
+Make questions specific and answers detailed based only on the provided text."""
+
 ALLOWED_EXTENSIONS = {"txt", "md", "pdf"}
 MAX_FILE_SIZE_MB = 5
-
-# ── Path to Vue built files ──────────────────────────────────────────────────
 FRONTEND_DIST = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 
 
-# ── App startup: pre-load embedding model ───────────────────────────────────
+# ── App startup ──────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("🔧 Loading sentence-transformer model...")
@@ -57,12 +65,12 @@ async def lifespan(app: FastAPI):
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 app = FastAPI(
     title="DevAssist Chatbot API",
-    description="Programming-only chatbot with RAG (SRS v1.0)",
+    description="Programming-only chatbot with RAG + Q&A Generation",
     version="1.0.0",
     lifespan=lifespan,
 )
 
-# ── CORS ─────────────────────────────────────────────────────────────────────
+# ── CORS ──────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -71,7 +79,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── ngrok header middleware (skips browser warning for recruiter) ─────────────
+# ── ngrok header middleware ───────────────────────────────────────────────────
 @app.middleware("http")
 async def add_ngrok_header(request: Request, call_next):
     response = await call_next(request)
@@ -80,7 +88,7 @@ async def add_ngrok_header(request: Request, call_next):
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# SRS 4.1 — POST /upload
+# POST /upload  (SRS 4.1)
 # ────────────────────────────────────────────────────────────────────────────
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
@@ -97,7 +105,7 @@ async def upload_file(file: UploadFile = File(...)):
     if size_mb > MAX_FILE_SIZE_MB:
         raise HTTPException(
             status_code=400,
-            detail=f"File too large ({size_mb:.1f}MB). Maximum allowed is {MAX_FILE_SIZE_MB}MB.",
+            detail=f"File too large ({size_mb:.1f}MB). Maximum is {MAX_FILE_SIZE_MB}MB.",
         )
 
     try:
@@ -109,6 +117,95 @@ async def upload_file(file: UploadFile = File(...)):
         "status": "success",
         "chunks_processed": chunks_processed,
         "filename": filename,
+    }
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# POST /generate-qa  ← NEW ENDPOINT
+# Takes uploaded document chunks and generates Q&A pairs using Groq
+# ────────────────────────────────────────────────────────────────────────────
+@app.post("/generate-qa")
+async def generate_qa():
+    """
+    Generate Q&A pairs from all uploaded document chunks.
+    Process: pick every Nth chunk → send to Groq → collect Q&A pairs → return all.
+    This replicates what NotebookLM does, using our own Groq + FAISS pipeline.
+    """
+    store = rag.get_store_info()
+    if not store["has_documents"]:
+        raise HTTPException(
+            status_code=400,
+            detail="No documents uploaded. Please upload a PDF/TXT/MD file first."
+        )
+
+    all_chunks = rag._chunks  # access internal chunk list
+
+    # Sample chunks evenly — pick every Nth chunk to cover whole document
+    # Max 10 chunks to stay within Groq rate limits
+    total = len(all_chunks)
+    step = max(1, total // 10)
+    sampled_chunks = [all_chunks[i] for i in range(0, total, step)][:10]
+
+    all_qa_pairs = []
+
+    for i, chunk in enumerate(sampled_chunks):
+        if len(chunk.strip()) < 100:
+            continue  # skip very short chunks
+
+        try:
+            response = groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
+                messages=[
+                    {"role": "system", "content": QA_SYSTEM_PROMPT},
+                    {"role": "user", "content": f"Generate Q&A pairs from this text:\n\n{chunk}"},
+                ],
+                max_tokens=600,
+                temperature=0.3,
+            )
+
+            raw = response.choices[0].message.content.strip()
+
+            # Clean up response — strip markdown code fences if present
+            if "```" in raw:
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+            raw = raw.strip()
+
+            qa_list = json.loads(raw)
+
+            # Validate structure
+            for item in qa_list:
+                if "question" in item and "answer" in item:
+                    all_qa_pairs.append({
+                        "question": item["question"],
+                        "answer": item["answer"],
+                        "chunk_index": i + 1,
+                    })
+
+        except json.JSONDecodeError:
+            # Skip chunks where Groq didn't return valid JSON
+            continue
+        except RateLimitError:
+            # If rate limited, return what we have so far
+            break
+        except Exception:
+            continue
+
+        # Small delay between requests to respect Groq rate limits
+        await asyncio.sleep(1)
+
+    if not all_qa_pairs:
+        raise HTTPException(
+            status_code=500,
+            detail="Could not generate Q&A pairs. Try again in a few seconds."
+        )
+
+    return {
+        "status": "success",
+        "total_qa_pairs": len(all_qa_pairs),
+        "document": store["documents"],
+        "qa_pairs": all_qa_pairs,
     }
 
 
@@ -126,7 +223,7 @@ async def clear_store():
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# SRS 4.2 — WebSocket /ws/chat
+# WebSocket /ws/chat  (SRS 4.2)
 # ────────────────────────────────────────────────────────────────────────────
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket):
@@ -203,7 +300,7 @@ async def websocket_chat(websocket: WebSocket):
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# Serve Vue Frontend — MUST BE AT THE BOTTOM after all API routes
+# Serve Vue Frontend — MUST BE AT BOTTOM
 # ────────────────────────────────────────────────────────────────────────────
 if os.path.exists(FRONTEND_DIST):
     app.mount(
@@ -218,6 +315,6 @@ if os.path.exists(FRONTEND_DIST):
 
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):
-        if full_path.startswith(("upload", "store-info", "clear-store", "ws", "docs", "openapi")):
+        if full_path.startswith(("upload", "store-info", "clear-store", "generate-qa", "ws", "docs", "openapi")):
             raise HTTPException(status_code=404, detail="Not found")
         return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
