@@ -1,529 +1,397 @@
 <template>
-  <div class="app-shell">
-
-    <!-- ══════════════════ LEFT SIDEBAR ══════════════════ -->
-    <aside class="sidebar">
-
-      <!-- Logo -->
-      <div class="sidebar-logo">
-        <div class="logo-icon">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="16 18 22 12 16 6"></polyline>
-            <polyline points="8 6 2 12 8 18"></polyline>
-          </svg>
-        </div>
-        <div>
-          <h1 class="logo-title">DevAssist</h1>
-          <p class="logo-sub">AI Programming Assistant</p>
-        </div>
+  <div class="flex h-screen bg-gray-950 text-gray-100 font-mono">
+    <!-- Sidebar -->
+    <aside class="w-72 bg-gray-900 border-r border-gray-800 flex flex-col p-4 gap-4">
+      <!-- Header -->
+      <div class="flex items-center gap-2 pb-3 border-b border-gray-800">
+        <span class="text-blue-400 text-xl">⚡</span>
+        <span class="text-lg font-bold text-white">DevAssist</span>
+        <span
+          class="ml-auto text-xs px-2 py-0.5 rounded-full"
+          :class="connected ? 'bg-green-900 text-green-400' : 'bg-red-900 text-red-400'"
+        >
+          {{ connected ? '🟢 Connected' : '🔴 Disconnected' }}
+        </span>
       </div>
 
-      <!-- Upload Zone -->
-      <div class="sidebar-section">
-        <p class="section-label">Sources</p>
-        <div
-          class="upload-zone"
-          :class="{ dragging: isDragging, 'has-file': uploadedDocs.length > 0 }"
-          @click="triggerFileInput"
-          @dragover.prevent="isDragging = true"
-          @dragleave="isDragging = false"
+      <!-- Upload Area -->
+      <div>
+        <p class="text-xs text-gray-500 uppercase tracking-widest mb-2">Document</p>
+        <label
+          class="flex flex-col items-center justify-center border-2 border-dashed border-gray-700 rounded-lg p-4 cursor-pointer hover:border-blue-500 transition-colors"
+          :class="{ 'border-blue-500 bg-blue-950/20': dragOver }"
+          @dragover.prevent="dragOver = true"
+          @dragleave="dragOver = false"
           @drop.prevent="handleDrop"
         >
-          <div class="upload-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-              <polyline points="17 8 12 3 7 8"></polyline>
-              <line x1="12" y1="3" x2="12" y2="15"></line>
-            </svg>
-          </div>
-          <p class="upload-title">Add sources</p>
-          <p class="upload-hint">PDF · TXT · MD &nbsp;·&nbsp; max 5 MB</p>
-          <input
-            ref="fileInputRef"
-            type="file"
-            accept=".pdf,.txt,.md"
-            class="hidden-input"
-            @change="handleFileSelect"
-          />
-        </div>
-
-        <!-- Upload status -->
-        <div v-if="uploadStatus" class="upload-status" :class="uploadStatus.type">
-          <span class="status-dot"></span>
-          {{ uploadStatus.message }}
-        </div>
+          <input type="file" class="hidden" accept=".pdf,.txt,.md" @change="handleFileInput" />
+          <span class="text-2xl mb-1">📄</span>
+          <span class="text-xs text-gray-400 text-center">
+            Drop PDF, TXT, or MD<br /><span class="text-blue-400">or click to browse</span>
+          </span>
+        </label>
       </div>
 
-      <!-- Document List -->
-      <div class="sidebar-section flex-grow">
-        <div class="section-label-row">
-          <p class="section-label">Documents ({{ uploadedDocs.length }})</p>
-          <button v-if="uploadedDocs.length > 0" class="clear-btn" @click="clearStore">Clear all</button>
+      <!-- Uploaded Doc Info -->
+      <div v-if="uploadedDoc" class="bg-gray-800 rounded-lg p-3 text-xs">
+        <div class="flex items-center gap-2 mb-1">
+          <span>📎</span>
+          <span class="text-green-400 font-semibold truncate">{{ uploadedDoc.name }}</span>
         </div>
-
-        <div v-if="uploadedDocs.length === 0" class="empty-docs">
-          No sources yet. Upload a file to begin.
-        </div>
-
-        <ul v-else class="doc-list">
-          <li v-for="doc in uploadedDocs" :key="doc.filename" class="doc-item">
-            <span class="doc-icon">{{ getFileIcon(doc.filename) }}</span>
-            <div class="doc-meta">
-              <span class="doc-name">{{ doc.filename }}</span>
-              <span class="doc-chunks">{{ doc.chunks_processed }} chunks</span>
-            </div>
-          </li>
-        </ul>
+        <div class="text-gray-400">{{ uploadedDoc.size }}</div>
+        <button
+          class="mt-2 text-red-400 hover:text-red-300 text-xs"
+          @click="clearDocument"
+        >✕ Remove</button>
       </div>
 
-      <!-- Connection -->
-      <div class="sidebar-footer">
-        <span class="conn-dot" :class="wsConnected ? 'online' : 'offline'"></span>
-        <span class="conn-label">{{ wsConnected ? 'Connected' : 'Reconnecting' }}</span>
+      <!-- Upload status / processing indicator -->
+      <div v-if="uploadStatus" class="text-xs rounded p-2"
+        :class="uploadStatus.type === 'error' ? 'bg-red-900/50 text-red-400' : 'bg-blue-900/50 text-blue-400'">
+        {{ uploadStatus.msg }}
       </div>
+
+      <!-- Spacer -->
+      <div class="flex-1"></div>
+
+      <!-- Clear Chat -->
+      <button
+        @click="clearChat"
+        class="w-full py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs transition-colors"
+      >
+        🗑 Clear Chat
+      </button>
     </aside>
 
-    <!-- ══════════════════ MAIN AREA ══════════════════ -->
-    <main class="main-area">
-
-      <!-- Top bar -->
-      <header class="topbar">
-        <div class="topbar-left">
-          <span class="topbar-title">{{ currentDocTitle || 'Chat' }}</span>
-          <span v-if="uploadedDocs.length > 0" class="topbar-badge">
-            {{ uploadedDocs.length }} source{{ uploadedDocs.length > 1 ? 's' : '' }}
-          </span>
-        </div>
-        <button class="clear-chat-btn" @click="clearChat">New chat</button>
-      </header>
-
-      <!-- Messages / content area -->
-      <div ref="messagesContainer" class="messages-area">
-
-        <!-- WELCOME STATE -->
-        <div v-if="messages.length === 0 && !isAnalyzing && !documentSummary" class="welcome-screen">
-          <div class="welcome-glyph">
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="16 18 22 12 16 6"></polyline>
-              <polyline points="8 6 2 12 8 18"></polyline>
-            </svg>
-          </div>
-          <h2 class="welcome-title">DevAssist is ready</h2>
-          <p class="welcome-sub">Ask anything about code, algorithms, system design, or debugging.<br>Upload a document on the left to unlock smart Q&amp;A.</p>
-        </div>
-
-        <!-- ANALYZING SPINNER -->
-        <div v-if="isAnalyzing && messages.length === 0" class="analyzing-block">
-          <div class="analyzing-spinner"></div>
-          <p class="analyzing-text">Analyzing document...</p>
-        </div>
-
-        <!-- NOTEBOOK SUMMARY + CHIPS -->
-        <div v-if="documentSummary && messages.length === 0" class="notebook-panel">
-          <div class="nb-meta">
-            <span class="nb-date">{{ todayFormatted }}</span>
-            <span class="nb-sep">·</span>
-            <span class="nb-source">{{ uploadedDocs.length }} source</span>
-          </div>
-          <div class="nb-summary" v-html="documentSummary"></div>
-          <div v-if="suggestedQuestions.length > 0" class="nb-questions">
-            <button
-              v-for="(q, i) in suggestedQuestions"
-              :key="i"
-              class="nb-chip"
-              @click="askSuggested(q)"
-            >
-              {{ q }}
-            </button>
+    <!-- Main Chat Area -->
+    <main class="flex-1 flex flex-col overflow-hidden">
+      <!-- Chat Messages -->
+      <div
+        ref="chatContainer"
+        class="flex-1 overflow-y-auto p-6 space-y-4"
+        id="chat-messages"
+      >
+        <!-- Welcome -->
+        <div v-if="messages.length === 0" class="flex justify-center items-center h-full">
+          <div class="text-center text-gray-600">
+            <div class="text-5xl mb-4">⚡</div>
+            <p class="text-xl font-semibold text-gray-400">DevAssist Chatbot</p>
+            <p class="text-sm mt-2">Ask any programming question or upload a document to analyze it.</p>
           </div>
         </div>
 
-        <!-- CHAT MESSAGES -->
-        <template v-for="(msg, i) in messages" :key="i">
-          <div class="message-row" :class="msg.role">
-            <div v-if="msg.role === 'assistant' || msg.role === 'error'" class="avatar assistant-avatar">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="16 18 22 12 16 6"></polyline>
-                <polyline points="8 6 2 12 8 18"></polyline>
-              </svg>
-            </div>
-            <div class="bubble" :class="msg.role">
-              <div v-if="msg.role === 'assistant' || msg.role === 'error'" class="prose" v-html="renderMarkdown(msg.content)"></div>
-              <div v-else class="user-text">{{ msg.content }}</div>
-              <span v-if="msg.streaming" class="cursor-blink"></span>
-            </div>
-            <div v-if="msg.role === 'user'" class="avatar user-avatar">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-                <circle cx="12" cy="7" r="4"></circle>
-              </svg>
-            </div>
-          </div>
-        </template>
-      </div>
-
-      <!-- Input bar -->
-      <div class="input-bar">
-        <textarea
-          v-model="inputMessage"
-          ref="inputRef"
-          rows="1"
-          placeholder="Ask a question or create something..."
-          class="chat-input"
-          :disabled="isGenerating"
-          @keydown.enter.exact.prevent="sendMessage"
-          @keydown.shift.enter="() => {}"
-          @input="autoResize"
-        ></textarea>
-        <button
-          class="send-btn"
-          :class="{ active: inputMessage.trim() && !isGenerating }"
-          :disabled="isGenerating || !inputMessage.trim()"
-          @click="sendMessage"
+        <!-- All Messages -->
+        <div
+          v-for="(msg, idx) in messages"
+          :key="idx"
+          class="flex"
+          :class="msg.role === 'user' ? 'justify-end' : 'justify-start'"
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="22" y1="2" x2="11" y2="13"></line>
-            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-          </svg>
-        </button>
+          <!-- Bot message -->
+          <div v-if="msg.role === 'bot'" class="flex gap-3 max-w-3xl w-full">
+            <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-sm flex-shrink-0 mt-1">⚡</div>
+            <div class="flex-1">
+
+              <!-- Doc info card: summary + persistent suggested questions -->
+              <div v-if="msg.type === 'doc-info'" class="bg-gray-800 rounded-xl p-5 border border-gray-700">
+                <!-- Doc header -->
+                <div class="flex items-center gap-2 mb-3 pb-3 border-b border-gray-700">
+                  <span class="text-xl">📄</span>
+                  <div>
+                    <p class="font-semibold text-green-400 text-sm">Document Loaded</p>
+                    <p class="text-xs text-gray-500">{{ msg.filename }}</p>
+                  </div>
+                  <span class="ml-auto text-xs text-gray-600 bg-gray-700 px-2 py-0.5 rounded-full">
+                    {{ msg.chunks }} chunks
+                  </span>
+                </div>
+
+                <!-- Real AI summary -->
+                <div class="mb-4">
+                  <p class="text-xs text-gray-500 uppercase tracking-widest mb-2">📋 Summary</p>
+                  <div v-html="renderMarkdown(msg.content)" class="prose-custom text-sm text-gray-300 leading-relaxed"></div>
+                </div>
+
+                <!-- Smart suggested questions — ALWAYS VISIBLE, never removed -->
+                <div v-if="msg.suggestions && msg.suggestions.length">
+                  <p class="text-xs text-gray-500 uppercase tracking-widest mb-2">💡 Suggested Questions</p>
+                  <div class="flex flex-col gap-2">
+                    <button
+                      v-for="(q, qi) in msg.suggestions"
+                      :key="qi"
+                      @click="askSuggestion(q)"
+                      class="px-3 py-2 rounded-lg text-xs bg-blue-900/30 border border-blue-800/50 text-blue-300 hover:bg-blue-800/50 hover:text-white hover:border-blue-600 transition-all text-left"
+                    >
+                      <span class="text-blue-500 mr-1">›</span> {{ q }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Regular bot text message -->
+              <div v-else class="bg-gray-800 rounded-xl px-4 py-3 border border-gray-700">
+                <div v-html="renderMarkdown(msg.content)" class="prose-custom text-sm text-gray-200 leading-relaxed"></div>
+                <span v-if="msg.streaming" class="inline-block w-2 h-4 bg-blue-400 animate-pulse ml-1 align-middle"></span>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- User message -->
+          <div v-if="msg.role === 'user'" class="max-w-xl">
+            <div class="bg-blue-600 rounded-xl px-4 py-2.5 text-sm text-white break-words">
+              {{ msg.content }}
+            </div>
+          </div>
+        </div>
+
+        <!-- Typing indicator -->
+        <div v-if="isTyping && !streamingActive" class="flex gap-3">
+          <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-sm flex-shrink-0">⚡</div>
+          <div class="bg-gray-800 rounded-xl px-4 py-3 border border-gray-700">
+            <div class="flex gap-1 items-center h-4">
+              <span class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay:0ms"></span>
+              <span class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay:150ms"></span>
+              <span class="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style="animation-delay:300ms"></span>
+            </div>
+          </div>
+        </div>
       </div>
-      <p class="input-note">Powered by Groq · llama-3.3-70b · RAG via FAISS</p>
+
+      <!-- Input Area -->
+      <div class="p-4 border-t border-gray-800 bg-gray-900 flex-shrink-0">
+        <div class="flex gap-3 items-end max-w-4xl mx-auto">
+          <textarea
+            v-model="userInput"
+            @keydown.enter.exact.prevent="sendMessage"
+            @keydown.enter.shift.exact="userInput += '\n'"
+            placeholder="Ask a programming question... (Enter to send, Shift+Enter for newline)"
+            rows="1"
+            class="flex-1 bg-gray-800 border border-gray-700 rounded-xl px-4 py-3 text-sm text-gray-100 placeholder-gray-600 resize-none focus:outline-none focus:border-blue-500 transition-colors"
+            :style="{ height: textareaHeight }"
+            @input="adjustTextarea"
+            :disabled="!connected"
+          ></textarea>
+          <button
+            @click="sendMessage"
+            :disabled="!userInput.trim() || !connected"
+            class="px-4 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm transition-colors flex-shrink-0"
+          >
+            ➤
+          </button>
+        </div>
+        <p class="text-center text-xs text-gray-700 mt-2">DevAssist answers programming questions only</p>
+      </div>
     </main>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue'
-import { marked } from 'marked'
-import hljs from 'highlight.js'
+import { ref, nextTick, onMounted, onUnmounted } from 'vue'
 
-marked.setOptions({
-  highlight(code, lang) {
-    if (lang && hljs.getLanguage(lang)) return hljs.highlight(code, { language: lang }).value
-    return hljs.highlightAuto(code).value
-  },
-  breaks: true,
-})
+// ─── State ────────────────────────────────────────────────
+const messages       = ref([])
+const userInput      = ref('')
+const connected      = ref(false)
+const isTyping       = ref(false)
+const streamingActive = ref(false)
+const dragOver       = ref(false)
+const uploadedDoc    = ref(null)
+const uploadStatus   = ref(null)
+const chatContainer  = ref(null)
+const textareaHeight = ref('48px')
 
-// ALL STATE as ref() — avoids the reactive([]) length undefined bug
-const messages           = ref([])
-const inputMessage       = ref('')
-const isGenerating       = ref(false)
-const isDragging         = ref(false)
-const uploadedDocs       = ref([])
-const uploadStatus       = ref(null)
-const wsConnected        = ref(false)
-const isAnalyzing        = ref(false)
-const documentSummary    = ref('')
-const suggestedQuestions = ref([])
+let ws = null
+let currentBotMsgIdx = -1
 
-const messagesContainer  = ref(null)
-const fileInputRef       = ref(null)
-const inputRef           = ref(null)
+// ─── WebSocket ────────────────────────────────────────────
+function connectWS() {
+  const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
+  ws = new WebSocket(`${protocol}://${location.host}/ws`)
 
-const todayFormatted = computed(function() {
-  return new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
-})
+  ws.onopen  = () => { connected.value = true }
+  ws.onclose = () => { connected.value = false; setTimeout(connectWS, 3000) }
+  ws.onerror = () => { connected.value = false }
 
-const currentDocTitle = computed(function() {
-  var docs = uploadedDocs.value
-  if (!docs || docs.length === 0) return ''
-  var name = docs[docs.length - 1].filename
-  return name.replace(/\.[^.]+$/, '').replace(/_/g, ' ')
-})
+  ws.onmessage = (event) => {
+    const data = JSON.parse(event.data)
 
-// WebSocket
-var ws = null
+    if (data.type === 'start') {
+      isTyping.value = false
+      streamingActive.value = true
+      // Append new bot message — never touch existing messages
+      messages.value.push({ role: 'bot', content: '', streaming: true, type: 'text' })
+      currentBotMsgIdx = messages.value.length - 1
+      scrollToBottom()
 
-function connectWebSocket() {
-  var isSecure = window.location.protocol === 'https:'
-  var WS_URL = (isSecure ? 'wss' : 'ws') + '://' + window.location.host + '/ws/chat'
-  ws = new WebSocket(WS_URL)
-  ws.onopen  = function() { wsConnected.value = true }
-  ws.onclose = function() { wsConnected.value = false; setTimeout(connectWebSocket, 3000) }
-  ws.onerror = function() {}
-  ws.onmessage = function(event) { handleServerMessage(JSON.parse(event.data)) }
-}
+    } else if (data.type === 'token') {
+      if (currentBotMsgIdx >= 0) {
+        messages.value[currentBotMsgIdx].content += data.content
+        scrollToBottom()
+      }
 
-function handleServerMessage(data) {
-  var msgs = messages.value
-  if (data.status === 'streaming' && data.token) {
-    var lastMsg = msgs[msgs.length - 1]
-    if (lastMsg && lastMsg.role === 'assistant' && lastMsg.streaming) {
-      lastMsg.content += data.token
+    } else if (data.type === 'end') {
+      if (currentBotMsgIdx >= 0) {
+        messages.value[currentBotMsgIdx].streaming = false
+      }
+      streamingActive.value = false
+      isTyping.value = false
+      currentBotMsgIdx = -1
+      scrollToBottom()
+
+    } else if (data.type === 'error') {
+      isTyping.value = false
+      streamingActive.value = false
+      messages.value.push({ role: 'bot', content: `❌ ${data.content}`, type: 'text' })
+      scrollToBottom()
     }
-    scrollToBottom()
-  } else if (data.status === 'done') {
-    var last = msgs[msgs.length - 1]
-    if (last) last.streaming = false
-    isGenerating.value = false
-    scrollToBottom()
-    nextTick(function() { if (inputRef.value) inputRef.value.focus() })
-  } else if (data.status === 'error') {
-    var lastE = msgs[msgs.length - 1]
-    if (lastE && lastE.streaming) {
-      lastE.role = 'error'; lastE.content = data.message; lastE.streaming = false
-    } else {
-      messages.value.push({ role: 'error', content: data.message, streaming: false })
-    }
-    isGenerating.value = false
-    scrollToBottom()
   }
 }
 
+onMounted(connectWS)
+onUnmounted(() => { if (ws) ws.close() })
+
+// ─── Send Message ─────────────────────────────────────────
+// Only appends user message — never clears or modifies existing messages
 function sendMessage() {
-  var text = inputMessage.value.trim()
-  if (!text || isGenerating.value || !ws || ws.readyState !== WebSocket.OPEN) return
-  messages.value.push({ role: 'user', content: text, streaming: false })
-  inputMessage.value = ''
-  nextTick(function() { if (inputRef.value) inputRef.value.style.height = 'auto' })
-  messages.value.push({ role: 'assistant', content: '', streaming: true })
-  isGenerating.value = true
+  const text = userInput.value.trim()
+  if (!text || !connected.value) return
+
+  messages.value.push({ role: 'user', content: text })
+  userInput.value = ''
+  textareaHeight.value = '48px'
+  isTyping.value = true
+
+  ws.send(JSON.stringify({ type: 'message', content: text }))
   scrollToBottom()
-  ws.send(JSON.stringify({ message: text }))
 }
 
-function askSuggested(question) {
-  inputMessage.value = question
-  sendMessage()
+// ─── Click suggested question ─────────────────────────────
+// Suggestions stay visible — we only append a user message and ask
+function askSuggestion(question) {
+  if (!connected.value) return
+  messages.value.push({ role: 'user', content: question })
+  isTyping.value = true
+  ws.send(JSON.stringify({ type: 'message', content: question }))
+  scrollToBottom()
 }
 
-function triggerFileInput() { if (fileInputRef.value) fileInputRef.value.click() }
-
-function handleDrop(e) {
-  isDragging.value = false
-  var f = e.dataTransfer && e.dataTransfer.files[0]
-  if (f) uploadFile(f)
-}
-
-function handleFileSelect(e) {
-  var f = e.target.files && e.target.files[0]
-  if (f) uploadFile(f)
+// ─── File Upload ──────────────────────────────────────────
+function handleFileInput(e) {
+  const file = e.target.files[0]
+  if (file) uploadFile(file)
+  // Reset input so same file can be re-uploaded if needed
   e.target.value = ''
 }
 
+function handleDrop(e) {
+  dragOver.value = false
+  const file = e.dataTransfer.files[0]
+  if (file) uploadFile(file)
+}
+
 async function uploadFile(file) {
-  if (file.size > 5 * 1024 * 1024) {
-    uploadStatus.value = { type: 'error', message: 'File exceeds 5 MB limit.' }
+  const ext = file.name.split('.').pop().toLowerCase()
+  if (!['pdf', 'txt', 'md'].includes(ext)) {
+    uploadStatus.value = { type: 'error', msg: 'Only PDF, TXT, MD files are allowed.' }
     return
   }
-  uploadStatus.value = { type: 'loading', message: 'Uploading ' + file.name + '...' }
-  var formData = new FormData()
+  if (file.size > 5 * 1024 * 1024) {
+    uploadStatus.value = { type: 'error', msg: 'File too large (max 5MB).' }
+    return
+  }
+
+  uploadStatus.value = { type: 'info', msg: '⏳ Uploading & analyzing document...' }
+
+  const formData = new FormData()
   formData.append('file', file)
+
   try {
-    var res  = await fetch('/upload', { method: 'POST', body: formData })
-    var data = await res.json()
-    if (res.ok && data.status === 'success') {
-      uploadedDocs.value.push({ filename: data.filename, chunks_processed: data.chunks_processed })
-      uploadStatus.value = { type: 'success', message: 'Indexed: ' + data.filename }
-      setTimeout(function() { uploadStatus.value = null }, 4000)
-      autoAnalyzeDocument()
+    const res  = await fetch('/upload', { method: 'POST', body: formData })
+    const data = await res.json()
+
+    if (data.status === 'ok') {
+      uploadedDoc.value = { name: file.name, size: formatBytes(file.size) }
+      uploadStatus.value = null
+
+      // ── Append doc-info card with real summary + smart questions ──────────
+      // This is a permanent message — it is NEVER removed or replaced
+      messages.value.push({
+        role:        'bot',
+        type:        'doc-info',
+        filename:    data.filename,
+        chunks:      data.chunks,
+        content:     data.summary,                // Real AI-generated summary from backend
+        suggestions: data.suggested_questions,    // Smart context-aware questions from backend
+      })
+
+      scrollToBottom()
     } else {
-      uploadStatus.value = { type: 'error', message: data.detail || 'Upload failed.' }
+      uploadStatus.value = { type: 'error', msg: data.detail || data.message || 'Upload failed.' }
     }
   } catch (err) {
-    uploadStatus.value = { type: 'error', message: 'Cannot reach backend.' }
+    uploadStatus.value = { type: 'error', msg: 'Upload error. Is the backend running?' }
   }
 }
 
-async function autoAnalyzeDocument() {
-  isAnalyzing.value = true
-  documentSummary.value = ''
-  suggestedQuestions.value = []
-  try {
-    var res  = await fetch('/generate-qa', { method: 'POST' })
-    var data = await res.json()
-    if (res.ok && data.status === 'success') {
-      var docs    = uploadedDocs.value
-      var docName = (data.document && data.document[0]) || (docs.length > 0 ? docs[docs.length - 1].filename : 'Document')
-      var cleanName = docName.replace(/\.[^.]+$/, '').replace(/_/g, ' ')
-      var pairs = data.qa_pairs || []
-      var intro = pairs.slice(0, 2).map(function(p) { return p.answer }).join(' ')
-      documentSummary.value = '<strong>' + cleanName + '</strong> — ' + intro
-      suggestedQuestions.value = pairs.slice(0, 6).map(function(p) { return p.question })
-    }
-  } catch (e) {
-    // silently fail
-  }
-  isAnalyzing.value = false
+function clearDocument() {
+  uploadedDoc.value  = null
+  uploadStatus.value = null
+  fetch('/clear-document', { method: 'POST' }).catch(() => {})
 }
 
-async function clearStore() {
-  try {
-    await fetch('/clear-store', { method: 'DELETE' })
-    uploadedDocs.value       = []
-    documentSummary.value    = ''
-    suggestedQuestions.value = []
-    messages.value           = []
-    uploadStatus.value = { type: 'success', message: 'All sources cleared.' }
-    setTimeout(function() { uploadStatus.value = null }, 3000)
-  } catch (e) {}
-}
-
+// ─── Helpers ──────────────────────────────────────────────
 function clearChat() {
-  messages.value           = []
-  documentSummary.value    = ''
-  suggestedQuestions.value = []
+  messages.value = []
 }
 
-function renderMarkdown(content) { return marked.parse(content || '') }
+function formatBytes(bytes) {
+  if (bytes < 1024)        return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
 
 function scrollToBottom() {
-  nextTick(function() {
-    if (messagesContainer.value) messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+  nextTick(() => {
+    if (chatContainer.value)
+      chatContainer.value.scrollTop = chatContainer.value.scrollHeight
   })
 }
 
-function getFileIcon(filename) {
-  var ext = filename.split('.').pop().toLowerCase()
-  return ext === 'pdf' ? '📕' : ext === 'md' ? '📝' : '📄'
+function adjustTextarea(e) {
+  e.target.style.height = '48px'
+  e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px'
+  textareaHeight.value  = e.target.style.height
 }
 
-function autoResize(e) {
-  var el = e.target
-  el.style.height = 'auto'
-  el.style.height = Math.min(el.scrollHeight, 160) + 'px'
+// ─── Lightweight Markdown renderer ────────────────────────
+function renderMarkdown(text) {
+  if (!text) return ''
+  return text
+    .replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) =>
+      `<pre class="bg-gray-900 rounded-lg p-3 my-2 overflow-x-auto text-xs"><code class="text-green-300">${escapeHtml(code.trim())}</code></pre>`)
+    .replace(/`([^`]+)`/g,   '<code class="bg-gray-700 text-yellow-300 px-1 rounded text-xs">$1</code>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong class="text-white font-semibold">$1</strong>')
+    .replace(/\*(.+?)\*/g,    '<em class="text-gray-300">$1</em>')
+    .replace(/^### (.+)$/gm,  '<h3 class="text-sm font-semibold text-blue-300 mt-3 mb-1">$1</h3>')
+    .replace(/^## (.+)$/gm,   '<h2 class="text-base font-semibold text-blue-300 mt-4 mb-2">$1</h2>')
+    .replace(/^# (.+)$/gm,    '<h1 class="text-lg font-bold text-blue-300 mt-4 mb-2">$1</h1>')
+    .replace(/^[-*] (.+)$/gm, '<li class="ml-4 list-disc text-gray-300 my-0.5">$1</li>')
+    .replace(/\n/g,           '<br/>')
 }
 
-onMounted(function() { connectWebSocket() })
-onUnmounted(function() { if (ws) ws.close() })
+function escapeHtml(str) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
 </script>
 
 <style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap');
-@import 'highlight.js/styles/github-dark.css';
-
-:root {
-  --bg:          #0f1117;
-  --surface:     #181c27;
-  --surface-2:   #1e2335;
-  --border:      rgba(255,255,255,0.07);
-  --border-2:    rgba(255,255,255,0.12);
-  --text:        #e8eaf0;
-  --text-2:      #8b91a8;
-  --text-3:      #555d7a;
-  --accent:      #4f7fff;
-  --accent-soft: rgba(79,127,255,0.12);
-  --accent-2:    #6ee7b7;
-  --danger:      #f87171;
-  --radius:      12px;
-  --radius-sm:   8px;
-}
-
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); }
-.app-shell { display: flex; height: 100vh; overflow: hidden; }
-
-.sidebar {
-  width: 280px; min-width: 280px; background: var(--surface);
-  border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden;
-}
-.sidebar-logo { display: flex; align-items: center; gap: 10px; padding: 20px 20px 16px; border-bottom: 1px solid var(--border); }
-.logo-icon { width: 36px; height: 36px; border-radius: 10px; background: var(--accent); display: flex; align-items: center; justify-content: center; color: #fff; flex-shrink: 0; }
-.logo-title { font-size: 15px; font-weight: 600; letter-spacing: -0.3px; color: var(--text); }
-.logo-sub   { font-size: 11px; color: var(--text-3); margin-top: 1px; }
-.sidebar-section { padding: 16px 16px 12px; border-bottom: 1px solid var(--border); }
-.sidebar-section.flex-grow { flex: 1; overflow-y: auto; border-bottom: none; }
-.section-label { font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); margin-bottom: 10px; }
-.section-label-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-.section-label-row .section-label { margin-bottom: 0; }
-.clear-btn { font-size: 11px; color: var(--danger); background: none; border: none; cursor: pointer; opacity: 0.7; transition: opacity 0.15s; }
-.clear-btn:hover { opacity: 1; }
-.upload-zone { border: 1.5px dashed var(--border-2); border-radius: var(--radius); padding: 20px 12px; text-align: center; cursor: pointer; transition: all 0.2s; }
-.upload-zone:hover, .upload-zone.dragging { border-color: var(--accent); background: var(--accent-soft); }
-.upload-zone.has-file { border-style: solid; border-color: rgba(110,231,183,0.3); background: rgba(110,231,183,0.05); }
-.upload-icon { color: var(--text-3); margin-bottom: 8px; display: flex; justify-content: center; }
-.upload-title { font-size: 13px; font-weight: 500; color: var(--text-2); }
-.upload-hint  { font-size: 11px; color: var(--text-3); margin-top: 4px; }
-.hidden-input { display: none; }
-.upload-status { margin-top: 10px; padding: 8px 12px; border-radius: var(--radius-sm); font-size: 11.5px; display: flex; align-items: center; gap: 7px; }
-.upload-status.loading { background: rgba(79,127,255,0.1); color: #93b8ff; border: 1px solid rgba(79,127,255,0.2); }
-.upload-status.success { background: rgba(110,231,183,0.1); color: var(--accent-2); border: 1px solid rgba(110,231,183,0.2); }
-.upload-status.error   { background: rgba(248,113,113,0.1); color: var(--danger); border: 1px solid rgba(248,113,113,0.2); }
-.status-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: currentColor; animation: pulse 1.5s ease-in-out infinite; }
-.upload-status.success .status-dot, .upload-status.error .status-dot { animation: none; }
-@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
-.empty-docs { font-size: 12px; color: var(--text-3); line-height: 1.6; font-style: italic; }
-.doc-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
-.doc-item { display: flex; align-items: flex-start; gap: 8px; padding: 9px 10px; border-radius: var(--radius-sm); background: var(--surface-2); border: 1px solid var(--border); }
-.doc-icon { font-size: 15px; flex-shrink: 0; margin-top: 1px; }
-.doc-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.doc-name { font-size: 12px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.doc-chunks { font-size: 10.5px; color: var(--text-3); }
-.sidebar-footer { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 7px; }
-.conn-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-.conn-dot.online  { background: var(--accent-2); }
-.conn-dot.offline { background: var(--danger); }
-.conn-label { font-size: 11.5px; color: var(--text-3); }
-
-.main-area { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
-.topbar { padding: 14px 28px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; background: var(--bg); flex-shrink: 0; }
-.topbar-left { display: flex; align-items: center; gap: 10px; }
-.topbar-title { font-size: 14px; font-weight: 600; color: var(--text); letter-spacing: -0.2px; }
-.topbar-badge { font-size: 11px; background: var(--accent-soft); color: var(--accent); padding: 2px 9px; border-radius: 99px; border: 1px solid rgba(79,127,255,0.25); font-weight: 500; }
-.clear-chat-btn { font-size: 12px; font-family: 'DM Sans', sans-serif; color: var(--text-3); background: none; border: 1px solid var(--border-2); border-radius: var(--radius-sm); padding: 5px 14px; cursor: pointer; transition: all 0.15s; }
-.clear-chat-btn:hover { color: var(--text); background: var(--surface-2); }
-.messages-area { flex: 1; overflow-y: auto; padding: 32px 28px 20px; display: flex; flex-direction: column; gap: 20px; scroll-behavior: smooth; }
-.messages-area::-webkit-scrollbar { width: 4px; }
-.messages-area::-webkit-scrollbar-track { background: transparent; }
-.messages-area::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
-
-.welcome-screen { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 16px; padding-bottom: 60px; }
-.welcome-glyph { width: 80px; height: 80px; border-radius: 24px; background: var(--surface); border: 1px solid var(--border-2); display: flex; align-items: center; justify-content: center; color: var(--accent); }
-.welcome-title { font-size: 22px; font-weight: 600; letter-spacing: -0.5px; color: var(--text); }
-.welcome-sub { font-size: 14px; color: var(--text-2); line-height: 1.65; max-width: 420px; }
-
-.analyzing-block { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 48px 0; }
-.analyzing-spinner { width: 32px; height: 32px; border: 2.5px solid var(--border-2); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.9s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-.analyzing-text { font-size: 13px; color: var(--text-3); }
-
-.notebook-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 24px 28px 20px; max-width: 760px; width: 100%; align-self: flex-start; animation: fadeUp 0.4s ease both; }
-@keyframes fadeUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
-.nb-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
-.nb-date { font-size: 11.5px; color: var(--text-3); font-weight: 500; }
-.nb-sep  { color: var(--text-3); }
-.nb-source { font-size: 11.5px; color: var(--accent); background: var(--accent-soft); padding: 1px 8px; border-radius: 99px; }
-.nb-summary { font-size: 14px; line-height: 1.75; color: var(--text-2); margin-bottom: 20px; }
-.nb-summary strong { color: var(--text); font-weight: 600; }
-.nb-questions { display: flex; flex-direction: column; gap: 8px; }
-.nb-chip { width: 100%; text-align: left; padding: 11px 16px; border-radius: var(--radius-sm); background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2); font-family: 'DM Sans', sans-serif; font-size: 13px; cursor: pointer; transition: all 0.15s; }
-.nb-chip:hover { border-color: var(--accent); color: var(--text); background: var(--accent-soft); }
-
-.message-row { display: flex; align-items: flex-start; gap: 10px; }
-.message-row.user { justify-content: flex-end; }
-.message-row.assistant, .message-row.error { justify-content: flex-start; }
-.avatar { width: 30px; height: 30px; border-radius: 9px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; margin-top: 2px; }
-.assistant-avatar { background: var(--accent); color: #fff; }
-.user-avatar { background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border-2); }
-.bubble { max-width: 72%; border-radius: 14px; padding: 12px 16px; font-size: 14px; line-height: 1.65; position: relative; }
-.bubble.assistant { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 14px 14px 14px 4px; }
-.bubble.user { background: var(--accent); color: #fff; border-radius: 14px 14px 4px 14px; }
-.bubble.error { background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.25); color: var(--danger); border-radius: 14px 14px 14px 4px; }
-.user-text { white-space: pre-wrap; word-break: break-word; }
-.cursor-blink { display: inline-block; width: 2px; height: 15px; background: var(--accent); margin-left: 4px; vertical-align: middle; border-radius: 2px; animation: blink 0.9s ease-in-out infinite; }
-@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
-
-.input-bar { margin: 0 28px 6px; display: flex; align-items: flex-end; gap: 10px; background: var(--surface); border: 1px solid var(--border-2); border-radius: 14px; padding: 10px 10px 10px 16px; transition: border-color 0.2s; }
-.input-bar:focus-within { border-color: var(--accent); }
-.chat-input { flex: 1; background: none; border: none; outline: none; resize: none; font-family: 'DM Sans', sans-serif; font-size: 14px; color: var(--text); line-height: 1.6; min-height: 24px; max-height: 160px; overflow-y: auto; }
-.chat-input::placeholder { color: var(--text-3); }
-.chat-input:disabled { opacity: 0.5; }
-.send-btn { width: 36px; height: 36px; border-radius: 9px; border: none; background: var(--border-2); color: var(--text-3); cursor: not-allowed; display: flex; align-items: center; justify-content: center; transition: all 0.15s; flex-shrink: 0; }
-.send-btn.active { background: var(--accent); color: #fff; cursor: pointer; }
-.send-btn.active:hover { background: #6990ff; }
-.input-note { text-align: center; font-size: 11px; color: var(--text-3); padding: 6px 0 12px; }
-
-.prose { font-size: 14px; line-height: 1.7; color: var(--text); }
-.prose pre { background: #0d1117 !important; border-radius: 10px; padding: 14px 16px; overflow-x: auto; margin: 10px 0; border: 1px solid var(--border); font-family: 'DM Mono', monospace; font-size: 12.5px; }
-.prose code:not(pre code) { background: rgba(79,127,255,0.12); color: #93b8ff; border-radius: 5px; padding: 1px 6px; font-family: 'DM Mono', monospace; font-size: 12.5px; }
-.prose p { margin-bottom: 8px; } .prose p:last-child { margin-bottom: 0; }
-.prose ul { list-style: disc; padding-left: 20px; margin-bottom: 8px; }
-.prose ol { list-style: decimal; padding-left: 20px; margin-bottom: 8px; }
-.prose li { margin-bottom: 4px; }
-.prose h1, .prose h2, .prose h3 { font-weight: 600; color: var(--text); margin: 12px 0 6px; }
-.prose h1 { font-size: 18px; } .prose h2 { font-size: 16px; } .prose h3 { font-size: 14px; }
-.prose a { color: var(--accent); text-decoration: underline; }
-.prose blockquote { border-left: 3px solid var(--accent); padding-left: 12px; color: var(--text-2); font-style: italic; margin: 8px 0; }
-.prose strong { font-weight: 600; color: var(--text); }
+#chat-messages::-webkit-scrollbar       { width: 6px; }
+#chat-messages::-webkit-scrollbar-track { background: transparent; }
+#chat-messages::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+.prose-custom li  { margin: 2px 0; }
+.prose-custom pre { white-space: pre-wrap; }
 </style>
