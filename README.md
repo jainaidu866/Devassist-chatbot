@@ -1,130 +1,86 @@
-# DevAssist Chatbot
-A programming-only AI assistant with document-based RAG support.
+# ⚡ DevAssist Chatbot
 
----
-
-## What It Does
-- Answers **programming questions only** (declines weather, cooking, etc.)
-- Streams responses in real-time
-- Upload a PDF/TXT/MD file → ask questions about it (RAG)
-- Code blocks with syntax highlighting
+A programming-only AI assistant with real-time streaming and document Q&A (RAG).
 
 ---
 
 ## Tech Stack
+
 | Layer | Technology |
 |---|---|
 | Frontend | Vue 3 + TailwindCSS |
 | Backend | Python FastAPI |
 | AI Model | Groq API (`llama-3.3-70b-versatile`) |
 | Vector Store | FAISS (in-memory) |
-| Embeddings | sentence-transformers/all-MiniLM-L6-v2 (runs locally) |
-| Communication | WebSocket (real-time streaming) |
+| Embeddings | sentence-transformers/all-MiniLM-L6-v2 |
+| Communication | WebSocket |
 
 ---
 
-## Project Structure
-```
-Devchatbot/
-├── backend/
-│   ├── main.py            ← API routes, WebSocket, Groq streaming
-│   ├── rag.py             ← FAISS vector store, chunking, embeddings
-│   ├── requirements.txt   ← Python packages
-│   └── .env               ← Your Groq API key (never share this)
-│
-└── frontend/
-    ├── src/
-    │   ├── App.vue        ← Full UI (sidebar + chat)
-    │   ├── main.js        ← Vue entry point
-    │   └── style.css      ← Tailwind styles
-    ├── index.html
-    ├── package.json
-    └── vite.config.js
-```
+## Setup
 
----
+**1. Get a Groq API key** at [console.groq.com](https://console.groq.com) → API Keys → Create
 
-## Setup Guide
-
-### Step 1 — Get a Free Groq API Key
-1. Go to [https://console.groq.com](https://console.groq.com) and sign up
-2. Click **API Keys** → **Create API Key**
-3. Copy the key (looks like `gsk_...`)
-
----
-
-### Step 2 — Backend Setup
-Open terminal inside the `backend/` folder:
-
+**2. Backend**
 ```bash
+cd backend
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
 ```
-
-Create a file named `.env` inside `backend/` and add:
+Create `backend/.env`:
 ```
-GROQ_API_KEY=paste_your_key_here
+GROQ_API_KEY=your_key_here
 ```
 
----
-
-### Step 3 — Frontend Build
-Open terminal inside the `frontend/` folder:
-
+**3. Frontend**
 ```bash
+cd frontend
 npm install
 npm run build
 ```
 
----
-
-### Step 4 — Run the App
-Go back to the `backend/` folder and run:
-
+**4. Run**
 ```bash
-venv\Scripts\activate
+cd backend
 uvicorn main:app --reload --port 8001
 ```
-
-Open your browser → [http://localhost:8001](http://localhost:8001)
-
-You should see the DevAssist UI with 🟢 Connected status.
+Open → [http://localhost:8001](http://localhost:8001)
 
 ---
 
-### Step 5 — Share Publicly via ngrok
-Install ngrok once:
-```bash
-winget install ngrok.ngrok
-```
+## Features
 
-Authenticate once (get token from [https://dashboard.ngrok.com](https://dashboard.ngrok.com)):
-```bash
-ngrok config add-authtoken YOUR_TOKEN
-```
+- Ask any programming / software engineering question
+- Upload a PDF, TXT, or MD file (max 5MB) → get an AI summary + smart suggested questions
+- Click any suggested question — suggestions stay visible, chat never clears
+- Answers use your document as context (RAG)
+- Responses stream in real time token by token
 
-Start tunnel:
+---
+
+## Share Publicly via ngrok
+
 ```bash
 ngrok http 8001
 ```
-
-Share the URL ngrok gives you — it works for anyone in the world.
+Share the URL ngrok gives you — works for anyone worldwide.
 
 ---
 
-## How to Use
+## Common Issues
 
-**Ask a programming question** → type in the chat box and press Enter
-
-**Upload a document** → click the upload area in the left sidebar → upload `.pdf`, `.txt`, or `.md` (max 5MB) → ask questions about it
-
-**Topic restriction** → asking about weather, food, or anything non-programming will be politely declined
+| Problem | Fix |
+|---|---|
+| 🔴 WebSocket 403 | Backend not running, or wrong port |
+| GROQ_API_KEY error | `.env` must be inside `backend/` folder |
+| Rate limit error | Wait 10 seconds (Groq free tier limit) |
+| UI not updating | Run `npm run build` then restart backend |
 
 ---
 
 ## Notes
-- Chat history is session-only — refreshing the page clears it
-- Uploaded documents are stored in memory — restarting the server clears them
-- If you get a rate limit error, wait 10 seconds and try again (Groq free tier limit)
-- First response may take 2–3 seconds (model warmup)
+
+- Chat history and uploaded documents are **session only** — cleared on server restart
+- Only **one document** active at a time
+- Off-topic questions (weather, cooking, etc.) are declined by design
