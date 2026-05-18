@@ -25,7 +25,7 @@ if not GROQ_API_KEY:
 
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# ── System prompt (SRS 3.2) ──────────────────────────────────────────────────
+# ── System prompt ────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = (
     "You are a helpful coding assistant. "
     "You strictly answer questions related to software engineering, algorithms, "
@@ -35,17 +35,27 @@ SYSTEM_PROMPT = (
     "When answering, use markdown formatting with proper code blocks and syntax highlighting."
 )
 
-# ── Q&A Generation prompt ────────────────────────────────────────────────────
-QA_SYSTEM_PROMPT = """You are a document analysis expert. 
-Your job is to read the given text and generate meaningful question and answer pairs from it.
-Generate exactly 3 question-answer pairs.
-Return ONLY a valid JSON array in this exact format, nothing else:
-[
-  {"question": "...", "answer": "..."},
-  {"question": "...", "answer": "..."},
-  {"question": "...", "answer": "..."}
-]
-Make questions specific and answers detailed based only on the provided text."""
+# ── Document analysis prompt — generates real summary + balanced questions ────
+DOC_ANALYSIS_PROMPT = """You are an expert document analyst. Read the provided document text carefully and return ONLY a valid JSON object in this exact format, nothing else — no markdown, no explanation, no code fences:
+
+{
+  "summary": "A detailed 4-6 sentence summary covering: what the document is, its purpose, key topics, and important details specific to this document.",
+  "suggested_questions": [
+    "A clear, direct question about the main purpose or key rules of this document",
+    "A straightforward question about the rights or duties described",
+    "A practical question about a specific process or procedure mentioned",
+    "A simple question about important terms, conditions, or eligibility criteria"
+  ]
+}
+
+Rules:
+- Summary must be informative and specific to this document's actual content — not generic.
+- Suggested questions must be easy to understand but specific to this document — not too simple (avoid "What is this document?") and not too complex (avoid multi-part analytical questions with "how does X relate to Y and what are the implications").
+- Good question difficulty level: a first-time reader of this document should be able to understand the question immediately and be curious to know the answer.
+- Questions should be short (under 15 words), clear, and directly answerable from the document.
+- Do NOT ask questions that require cross-referencing multiple sections or deep legal/technical analysis.
+- Do NOT use generic questions like "What is this document about?" or "Summarize the key points".
+- Return ONLY the raw JSON object. No preamble, no markdown fences, no explanation."""
 
 ALLOWED_EXTENSIONS = {"txt", "md", "pdf"}
 MAX_FILE_SIZE_MB = 5
@@ -87,8 +97,101 @@ async def add_ngrok_header(request: Request, call_next):
     return response
 
 
+# ── Helper: generate real AI summary + smart questions from document ──────────
+async def generate_doc_summary_and_questions(filename: str) -> dict:
+    """
+    Samples chunks from beginning, middle, and end of the uploaded document,
+    sends them to Groq, and returns a real AI-generated summary + smart questions.
+    Falls back to generic values if Groq fails.
+    """
+    all_chunks = rag._chunks
+    total = len(all_chunks)
+
+    if not all_chunks:
+        return {
+            "summary": f"**{filename}** has been processed. You can now ask questions about it.",
+            "suggested_questions": [
+                "What is the main purpose of this document?",
+                "What are the key rules or guidelines described?",
+                "What procedures or processes are outlined?",
+                "What rights or duties are mentioned?",
+            ]
+        }
+
+    # Sample from beginning (most important for context), middle, and end
+    indices = set()
+    # First 3 chunks — intro/overview
+    for i in range(min(3, total)):
+        indices.add(i)
+    # Middle 3 chunks
+    mid = total // 2
+    for i in range(mid, min(mid + 3, total)):
+        indices.add(i)
+    # Last 2 chunks
+    for i in range(max(0, total - 2), total):
+        indices.add(i)
+
+    sampled = [all_chunks[i] for i in sorted(indices)]
+
+    # Combine, capped at 4000 chars so we stay within token limits
+    combined_text = "\n\n---\n\n".join(sampled)
+    combined_text = combined_text[:4000]
+
+    try:
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": DOC_ANALYSIS_PROMPT},
+                {"role": "user", "content": f"Document filename: {filename}\n\nDocument content:\n\n{combined_text}"},
+            ],
+            max_tokens=800,
+            temperature=0.3,
+        )
+
+        raw = response.choices[0].message.content.strip()
+
+        # Strip markdown fences if model wrapped anyway
+        if "```" in raw:
+            parts = raw.split("```")
+            for part in parts:
+                part = part.strip()
+                if part.startswith("json"):
+                    part = part[4:].strip()
+                if part.startswith("{"):
+                    raw = part
+                    break
+        raw = raw.strip()
+
+        result = json.loads(raw)
+
+        summary = result.get("summary", "").strip()
+        questions = result.get("suggested_questions", [])
+
+        if not summary or len(summary) < 50:
+            raise ValueError("Summary too short")
+        if not questions or len(questions) < 2:
+            raise ValueError("Not enough questions generated")
+
+        return {
+            "summary": summary,
+            "suggested_questions": questions[:4],
+        }
+
+    except Exception as e:
+        print(f"⚠️  Doc analysis failed: {e}. Using fallback.")
+        return {
+            "summary": f"**{filename}** has been processed and indexed ({total} chunks). You can now ask questions about its content.",
+            "suggested_questions": [
+                "What is the main purpose of this document?",
+                "What are the key rules or guidelines described?",
+                "What procedures or processes are outlined?",
+                "What rights or duties are mentioned?",
+            ]
+        }
+
+
 # ────────────────────────────────────────────────────────────────────────────
-# POST /upload  (SRS 4.1)
+# POST /upload
 # ────────────────────────────────────────────────────────────────────────────
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
@@ -113,24 +216,23 @@ async def upload_file(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")
 
+    # Generate real AI summary + smart suggested questions after indexing
+    doc_analysis = await generate_doc_summary_and_questions(filename)
+
     return {
-        "status": "success",
-        "chunks_processed": chunks_processed,
+        "status": "ok",
+        "chunks": chunks_processed,
         "filename": filename,
+        "summary": doc_analysis["summary"],
+        "suggested_questions": doc_analysis["suggested_questions"],
     }
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# POST /generate-qa  ← NEW ENDPOINT
-# Takes uploaded document chunks and generates Q&A pairs using Groq
+# POST /generate-qa
 # ────────────────────────────────────────────────────────────────────────────
 @app.post("/generate-qa")
 async def generate_qa():
-    """
-    Generate Q&A pairs from all uploaded document chunks.
-    Process: pick every Nth chunk → send to Groq → collect Q&A pairs → return all.
-    This replicates what NotebookLM does, using our own Groq + FAISS pipeline.
-    """
     store = rag.get_store_info()
     if not store["has_documents"]:
         raise HTTPException(
@@ -138,10 +240,18 @@ async def generate_qa():
             detail="No documents uploaded. Please upload a PDF/TXT/MD file first."
         )
 
-    all_chunks = rag._chunks  # access internal chunk list
+    QA_SYSTEM_PROMPT = """You are a document analysis expert. 
+Your job is to read the given text and generate meaningful question and answer pairs from it.
+Generate exactly 3 question-answer pairs.
+Return ONLY a valid JSON array in this exact format, nothing else:
+[
+  {"question": "...", "answer": "..."},
+  {"question": "...", "answer": "..."},
+  {"question": "...", "answer": "..."}
+]
+Make questions specific and answers detailed based only on the provided text."""
 
-    # Sample chunks evenly — pick every Nth chunk to cover whole document
-    # Max 10 chunks to stay within Groq rate limits
+    all_chunks = rag._chunks
     total = len(all_chunks)
     step = max(1, total // 10)
     sampled_chunks = [all_chunks[i] for i in range(0, total, step)][:10]
@@ -150,7 +260,7 @@ async def generate_qa():
 
     for i, chunk in enumerate(sampled_chunks):
         if len(chunk.strip()) < 100:
-            continue  # skip very short chunks
+            continue
 
         try:
             response = groq_client.chat.completions.create(
@@ -165,7 +275,6 @@ async def generate_qa():
 
             raw = response.choices[0].message.content.strip()
 
-            # Clean up response — strip markdown code fences if present
             if "```" in raw:
                 raw = raw.split("```")[1]
                 if raw.startswith("json"):
@@ -174,7 +283,6 @@ async def generate_qa():
 
             qa_list = json.loads(raw)
 
-            # Validate structure
             for item in qa_list:
                 if "question" in item and "answer" in item:
                     all_qa_pairs.append({
@@ -184,15 +292,12 @@ async def generate_qa():
                     })
 
         except json.JSONDecodeError:
-            # Skip chunks where Groq didn't return valid JSON
             continue
         except RateLimitError:
-            # If rate limited, return what we have so far
             break
         except Exception:
             continue
 
-        # Small delay between requests to respect Groq rate limits
         await asyncio.sleep(1)
 
     if not all_qa_pairs:
@@ -222,10 +327,19 @@ async def clear_store():
     return {"status": "cleared"}
 
 
+# ── POST /clear-document ──────────────────────────────────────────────────────
+@app.post("/clear-document")
+async def clear_document():
+    rag.clear_store()
+    return {"status": "cleared"}
+
+
 # ────────────────────────────────────────────────────────────────────────────
-# WebSocket /ws/chat  (SRS 4.2)
+# WebSocket /ws
+# Incoming: { "type": "message", "content": "..." }
+# Outgoing: { "type": "start" | "token" | "end" | "error", "content": "..." }
 # ────────────────────────────────────────────────────────────────────────────
-@app.websocket("/ws/chat")
+@app.websocket("/ws")
 async def websocket_chat(websocket: WebSocket):
     await websocket.accept()
     print("🔌 WebSocket connection established.")
@@ -235,11 +349,14 @@ async def websocket_chat(websocket: WebSocket):
             raw = await websocket.receive_text()
             try:
                 payload = json.loads(raw)
-                user_message = payload.get("message", "").strip()
+                if payload.get("type") == "message":
+                    user_message = payload.get("content", "").strip()
+                else:
+                    user_message = payload.get("message", "").strip()
             except json.JSONDecodeError:
                 await websocket.send_text(json.dumps({
-                    "status": "error",
-                    "message": "Invalid JSON payload.",
+                    "type": "error",
+                    "content": "Invalid JSON payload.",
                 }))
                 continue
 
@@ -261,6 +378,8 @@ async def websocket_chat(websocket: WebSocket):
                 full_system_prompt = SYSTEM_PROMPT
 
             try:
+                await websocket.send_text(json.dumps({"type": "start"}))
+
                 stream = groq_client.chat.completions.create(
                     model="llama-3.3-70b-versatile",
                     messages=[
@@ -276,23 +395,23 @@ async def websocket_chat(websocket: WebSocket):
                     delta = chunk.choices[0].delta
                     if delta and delta.content:
                         await websocket.send_text(json.dumps({
-                            "token": delta.content,
-                            "status": "streaming",
+                            "type": "token",
+                            "content": delta.content,
                         }))
                         await asyncio.sleep(0)
 
-                await websocket.send_text(json.dumps({"status": "done"}))
+                await websocket.send_text(json.dumps({"type": "end"}))
 
             except RateLimitError:
                 await websocket.send_text(json.dumps({
-                    "status": "error",
-                    "message": "Traffic is high. Please wait 10 seconds before asking again.",
+                    "type": "error",
+                    "content": "Traffic is high. Please wait 10 seconds before asking again.",
                 }))
 
             except Exception as e:
                 await websocket.send_text(json.dumps({
-                    "status": "error",
-                    "message": f"An unexpected error occurred: {str(e)}",
+                    "type": "error",
+                    "content": f"An unexpected error occurred: {str(e)}",
                 }))
 
     except WebSocketDisconnect:
@@ -315,6 +434,6 @@ if os.path.exists(FRONTEND_DIST):
 
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):
-        if full_path.startswith(("upload", "store-info", "clear-store", "generate-qa", "ws", "docs", "openapi")):
+        if full_path.startswith(("upload", "store-info", "clear-store", "generate-qa", "clear-document", "ws", "docs", "openapi")):
             raise HTTPException(status_code=404, detail="Not found")
         return FileResponse(os.path.join(FRONTEND_DIST, "index.html"))
