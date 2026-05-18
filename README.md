@@ -4,6 +4,14 @@ DevAssist is a programming-focused AI chatbot built for developers. It answers s
 
 ---
 
+## 🎥 Demo Video
+
+[![DevAssist Demo](https://img.shields.io/badge/Watch%20Demo-YouTube-red?style=for-the-badge&logo=youtube)](https://youtu.be/GlJPwaLY5Qs?feature=shared)
+
+> See DevAssist in action — document upload, auto Q&A generation, real-time streaming responses, and RAG-powered answers.
+
+---
+
 ## Tech Stack
 
 | Layer | Technology |
@@ -52,10 +60,11 @@ Open → [http://localhost:8001](http://localhost:8001)
 ## Features
 
 - Ask any programming / software engineering question
-- Upload a PDF, TXT, or MD file (max 5MB) → get an AI summary + smart suggested questions
-- Click any suggested question — suggestions stay visible, chat never clears
+- Upload a PDF, TXT, or MD file (max 5MB) → get an AI summary + smart suggested questions automatically
+- Click any suggested question — answers stream in real time
 - Answers use your document as context (RAG)
-- Responses stream in real time token by token
+- Responses stream token by token via WebSocket
+- Off-topic questions are declined by design
 
 ---
 
