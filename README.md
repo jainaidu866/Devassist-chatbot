@@ -1,6 +1,6 @@
 # ⚡ DevAssist Chatbot
 
-A programming-only AI assistant with real-time streaming and document Q&A (RAG).
+DevAssist is a programming-focused AI chatbot built for developers. It answers software engineering questions in real time and lets you upload documents (PDF, TXT, MD) to ask questions directly from their content. When a document is uploaded, it automatically generates an AI summary and smart suggested questions tailored to that document. All responses stream token by token via WebSocket. It strictly stays on topic — general questions like weather or cooking are declined by design, keeping the assistant focused and reliable for development work.
 
 ---
 
