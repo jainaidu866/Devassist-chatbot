@@ -45,13 +45,12 @@
         >✕ Remove</button>
       </div>
 
-      <!-- Upload status / processing indicator -->
+      <!-- Upload status -->
       <div v-if="uploadStatus" class="text-xs rounded p-2"
         :class="uploadStatus.type === 'error' ? 'bg-red-900/50 text-red-400' : 'bg-blue-900/50 text-blue-400'">
         {{ uploadStatus.msg }}
       </div>
 
-      <!-- Spacer -->
       <div class="flex-1"></div>
 
       <!-- Clear Chat -->
@@ -92,9 +91,8 @@
             <div class="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-sm flex-shrink-0 mt-1">⚡</div>
             <div class="flex-1">
 
-              <!-- Doc info card: summary + persistent suggested questions -->
+              <!-- Doc info card: summary + suggested questions -->
               <div v-if="msg.type === 'doc-info'" class="bg-gray-800 rounded-xl p-5 border border-gray-700">
-                <!-- Doc header -->
                 <div class="flex items-center gap-2 mb-3 pb-3 border-b border-gray-700">
                   <span class="text-xl">📄</span>
                   <div>
@@ -106,15 +104,9 @@
                   </span>
                 </div>
 
-                <!-- Real AI summary -->
-                <div class="mb-4">
-                  <p class="text-xs text-gray-500 uppercase tracking-widest mb-2">📋 Summary</p>
-                  <div v-html="renderMarkdown(msg.content)" class="prose-custom text-sm text-gray-300 leading-relaxed"></div>
-                </div>
-
-                <!-- Smart suggested questions — ALWAYS VISIBLE, never removed -->
+                <!-- Suggested questions — 10 chips, always visible -->
                 <div v-if="msg.suggestions && msg.suggestions.length">
-                  <p class="text-xs text-gray-500 uppercase tracking-widest mb-2">💡 Suggested Questions</p>
+                  <p class="text-xs text-gray-500 uppercase tracking-widest mb-2">💡 Suggested Questions ({{ msg.suggestions.length }})</p>
                   <div class="flex flex-col gap-2">
                     <button
                       v-for="(q, qi) in msg.suggestions"
@@ -125,6 +117,12 @@
                       <span class="text-blue-500 mr-1">›</span> {{ q }}
                     </button>
                   </div>
+                </div>
+
+                <!-- Generating indicator -->
+                <div v-if="msg.generating" class="flex items-center gap-2 mt-3 text-xs text-gray-500">
+                  <span class="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></span>
+                  Generating 10 questions from document…
                 </div>
               </div>
 
@@ -190,61 +188,75 @@
 import { ref, nextTick, onMounted, onUnmounted } from 'vue'
 
 // ─── State ────────────────────────────────────────────────
-const messages       = ref([])
-const userInput      = ref('')
-const connected      = ref(false)
-const isTyping       = ref(false)
+const messages        = ref([])
+const userInput       = ref('')
+const connected       = ref(false)
+const isTyping        = ref(false)
 const streamingActive = ref(false)
-const dragOver       = ref(false)
-const uploadedDoc    = ref(null)
-const uploadStatus   = ref(null)
-const chatContainer  = ref(null)
-const textareaHeight = ref('48px')
+const dragOver        = ref(false)
+const uploadedDoc     = ref(null)
+const uploadStatus    = ref(null)
+const chatContainer   = ref(null)
+const textareaHeight  = ref('48px')
 
 let ws = null
 let currentBotMsgIdx = -1
 
 // ─── WebSocket ────────────────────────────────────────────
+// Path MUST be /ws/chat — matches main.py @app.websocket("/ws/chat")
 function connectWS() {
   const protocol = location.protocol === 'https:' ? 'wss' : 'ws'
-  ws = new WebSocket(`${protocol}://${location.host}/ws`)
+  ws = new WebSocket(protocol + '://' + location.host + '/ws/chat')
 
   ws.onopen  = () => { connected.value = true }
   ws.onclose = () => { connected.value = false; setTimeout(connectWS, 3000) }
   ws.onerror = () => { connected.value = false }
 
   ws.onmessage = (event) => {
-    const data = JSON.parse(event.data)
+    try {
+      const data = JSON.parse(event.data)
+      handleWsMessage(data)
+    } catch (e) {}
+  }
+}
 
-    if (data.type === 'start') {
+// ─── Handle WebSocket messages from main.py ───────────────
+// main.py sends: { token, status: 'streaming' } | { status: 'done' } | { status: 'error', message }
+function handleWsMessage(data) {
+  if (data.status === 'streaming' && data.token) {
+    // First token — create the bot message bubble
+    if (!streamingActive.value) {
       isTyping.value = false
       streamingActive.value = true
-      // Append new bot message — never touch existing messages
       messages.value.push({ role: 'bot', content: '', streaming: true, type: 'text' })
       currentBotMsgIdx = messages.value.length - 1
-      scrollToBottom()
-
-    } else if (data.type === 'token') {
-      if (currentBotMsgIdx >= 0) {
-        messages.value[currentBotMsgIdx].content += data.content
-        scrollToBottom()
-      }
-
-    } else if (data.type === 'end') {
-      if (currentBotMsgIdx >= 0) {
-        messages.value[currentBotMsgIdx].streaming = false
-      }
-      streamingActive.value = false
-      isTyping.value = false
-      currentBotMsgIdx = -1
-      scrollToBottom()
-
-    } else if (data.type === 'error') {
-      isTyping.value = false
-      streamingActive.value = false
-      messages.value.push({ role: 'bot', content: `❌ ${data.content}`, type: 'text' })
+    }
+    // Append token to current message
+    if (currentBotMsgIdx >= 0) {
+      messages.value[currentBotMsgIdx].content += data.token
       scrollToBottom()
     }
+
+  } else if (data.status === 'done') {
+    if (currentBotMsgIdx >= 0) {
+      messages.value[currentBotMsgIdx].streaming = false
+    }
+    streamingActive.value = false
+    isTyping.value = false
+    currentBotMsgIdx = -1
+    scrollToBottom()
+
+  } else if (data.status === 'error') {
+    isTyping.value = false
+    streamingActive.value = false
+    if (currentBotMsgIdx >= 0) {
+      messages.value[currentBotMsgIdx].content = '❌ ' + data.message
+      messages.value[currentBotMsgIdx].streaming = false
+      currentBotMsgIdx = -1
+    } else {
+      messages.value.push({ role: 'bot', content: '❌ ' + data.message, type: 'text' })
+    }
+    scrollToBottom()
   }
 }
 
@@ -252,35 +264,30 @@ onMounted(connectWS)
 onUnmounted(() => { if (ws) ws.close() })
 
 // ─── Send Message ─────────────────────────────────────────
-// Only appends user message — never clears or modifies existing messages
+// main.py expects: { message: "text" }
 function sendMessage() {
   const text = userInput.value.trim()
-  if (!text || !connected.value) return
+  if (!text || !connected.value || streamingActive.value) return
 
   messages.value.push({ role: 'user', content: text })
   userInput.value = ''
   textareaHeight.value = '48px'
   isTyping.value = true
 
-  ws.send(JSON.stringify({ type: 'message', content: text }))
+  ws.send(JSON.stringify({ message: text }))
   scrollToBottom()
 }
 
-// ─── Click suggested question ─────────────────────────────
-// Suggestions stay visible — we only append a user message and ask
 function askSuggestion(question) {
-  if (!connected.value) return
-  messages.value.push({ role: 'user', content: question })
-  isTyping.value = true
-  ws.send(JSON.stringify({ type: 'message', content: question }))
-  scrollToBottom()
+  if (!connected.value || streamingActive.value) return
+  userInput.value = question
+  sendMessage()
 }
 
 // ─── File Upload ──────────────────────────────────────────
 function handleFileInput(e) {
   const file = e.target.files[0]
   if (file) uploadFile(file)
-  // Reset input so same file can be re-uploaded if needed
   e.target.value = ''
 }
 
@@ -301,49 +308,67 @@ async function uploadFile(file) {
     return
   }
 
-  uploadStatus.value = { type: 'info', msg: '⏳ Uploading & analyzing document...' }
+  uploadStatus.value = { type: 'info', msg: '⏳ Uploading document...' }
 
   const formData = new FormData()
   formData.append('file', file)
 
   try {
-    const res  = await fetch('/upload', { method: 'POST', body: formData })
-    const data = await res.json()
+    // Step 1: Upload file — POST /upload (matches main.py)
+    const uploadRes  = await fetch('/upload', { method: 'POST', body: formData })
+    const uploadData = await uploadRes.json()
 
-    if (data.status === 'ok') {
-      uploadedDoc.value = { name: file.name, size: formatBytes(file.size) }
-      uploadStatus.value = null
-
-      // ── Append doc-info card with real summary + smart questions ──────────
-      // This is a permanent message — it is NEVER removed or replaced
-      messages.value.push({
-        role:        'bot',
-        type:        'doc-info',
-        filename:    data.filename,
-        chunks:      data.chunks,
-        content:     data.summary,                // Real AI-generated summary from backend
-        suggestions: data.suggested_questions,    // Smart context-aware questions from backend
-      })
-
-      scrollToBottom()
-    } else {
-      uploadStatus.value = { type: 'error', msg: data.detail || data.message || 'Upload failed.' }
+    if (!uploadRes.ok || uploadData.status !== 'success') {
+      uploadStatus.value = { type: 'error', msg: uploadData.detail || 'Upload failed.' }
+      return
     }
+
+    uploadedDoc.value  = { name: file.name, size: formatBytes(file.size) }
+    uploadStatus.value = { type: 'info', msg: '🧠 Generating 10 questions...' }
+
+    // Add doc-info card immediately, with generating indicator
+    const docCardIdx = messages.value.length
+    messages.value.push({
+      role:        'bot',
+      type:        'doc-info',
+      filename:    uploadData.filename,
+      chunks:      uploadData.chunks_processed,
+      suggestions: [],
+      generating:  true,
+    })
+    scrollToBottom()
+
+    // Step 2: Generate exactly 10 Q&A — POST /generate-qa (matches main.py)
+    try {
+      const qaRes  = await fetch('/generate-qa', { method: 'POST' })
+      const qaData = await qaRes.json()
+
+      if (qaRes.ok && qaData.status === 'success' && Array.isArray(qaData.qa_pairs)) {
+        // Extract just the questions for the chips
+        const questions = qaData.qa_pairs.map(function(p) { return p.question })
+        messages.value[docCardIdx].suggestions = questions
+      }
+    } catch (e) {
+      // Q&A generation failed silently — doc still works for chat
+    }
+
+    messages.value[docCardIdx].generating = false
+    uploadStatus.value = null
+    scrollToBottom()
+
   } catch (err) {
     uploadStatus.value = { type: 'error', msg: 'Upload error. Is the backend running?' }
   }
 }
 
-function clearDocument() {
+async function clearDocument() {
   uploadedDoc.value  = null
   uploadStatus.value = null
-  fetch('/clear-document', { method: 'POST' }).catch(() => {})
+  try { await fetch('/clear-store', { method: 'DELETE' }) } catch (e) {}
 }
 
 // ─── Helpers ──────────────────────────────────────────────
-function clearChat() {
-  messages.value = []
-}
+function clearChat() { messages.value = [] }
 
 function formatBytes(bytes) {
   if (bytes < 1024)        return bytes + ' B'
@@ -364,14 +389,13 @@ function adjustTextarea(e) {
   textareaHeight.value  = e.target.style.height
 }
 
-// ─── Lightweight Markdown renderer ────────────────────────
 function renderMarkdown(text) {
   if (!text) return ''
   return text
     .replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) =>
-      `<pre class="bg-gray-900 rounded-lg p-3 my-2 overflow-x-auto text-xs"><code class="text-green-300">${escapeHtml(code.trim())}</code></pre>`)
-    .replace(/`([^`]+)`/g,   '<code class="bg-gray-700 text-yellow-300 px-1 rounded text-xs">$1</code>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong class="text-white font-semibold">$1</strong>')
+      '<pre class="bg-gray-900 rounded-lg p-3 my-2 overflow-x-auto text-xs"><code class="text-green-300">' + escapeHtml(code.trim()) + '</code></pre>')
+    .replace(/`([^`]+)`/g,    '<code class="bg-gray-700 text-yellow-300 px-1 rounded text-xs">$1</code>')
+    .replace(/\*\*(.+?)\*\*/g,'<strong class="text-white font-semibold">$1</strong>')
     .replace(/\*(.+?)\*/g,    '<em class="text-gray-300">$1</em>')
     .replace(/^### (.+)$/gm,  '<h3 class="text-sm font-semibold text-blue-300 mt-3 mb-1">$1</h3>')
     .replace(/^## (.+)$/gm,   '<h2 class="text-base font-semibold text-blue-300 mt-4 mb-2">$1</h2>')
@@ -381,10 +405,7 @@ function renderMarkdown(text) {
 }
 
 function escapeHtml(str) {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
 }
 </script>
 
