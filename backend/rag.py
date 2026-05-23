@@ -1,23 +1,24 @@
 """
 rag.py — Retrieval-Augmented Generation module
-Handles: text chunking, local embedding (sentence-transformers), FAISS vector store
-Per SRS Section 3.3: chunk=500 chars, overlap=50, top-3 retrieval, in-memory only
+Handles: text chunking, local embedding (sentence-transformers), ChromaDB vector store
+Per SRS Section 3.3: chunk=500 chars, overlap=50, top-3 retrieval
 """
 
 import io
+import uuid
 import fitz  # PyMuPDF for PDF parsing
 from sentence_transformers import SentenceTransformer
-import faiss
-import numpy as np
+import chromadb
 
 # ── Model (loaded once at startup, runs fully locally — no embedding costs) ──
 EMBED_MODEL = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2")
-EMBED_DIM = 384  # all-MiniLM-L6-v2 output dimension
 
-# ── In-memory store (SRS 5.2: lost on server restart — acceptable for MVP) ──
-_index: faiss.IndexFlatL2 | None = None
-_chunks: list[str] = []          # parallel list: chunk text at position i matches vector i
-_doc_names: list[str] = []       # tracks which file each chunk came from
+# ── ChromaDB in-memory client ────────────────────────────────────────────────
+_chroma_client = chromadb.Client()
+_collection = _chroma_client.get_or_create_collection(name="devassist_docs")
+
+_chunks: list[str] = []       # parallel list: chunk text (used by main.py for doc analysis)
+_doc_names: list[str] = []    # tracks which file each chunk came from
 
 
 # ─────────────────────────── TEXT EXTRACTION ────────────────────────────────
@@ -61,10 +62,10 @@ def chunk_text(text: str, chunk_size: int = 500, overlap: int = 50) -> list[str]
 def add_document(file_bytes: bytes, filename: str) -> int:
     """
     Full ingestion pipeline:
-      extract text → chunk → embed → store in FAISS
+      extract text → chunk → embed → store in ChromaDB
     Returns number of chunks processed.
     """
-    global _index, _chunks, _doc_names
+    global _chunks, _doc_names
 
     text = extract_text(file_bytes, filename)
     chunks = chunk_text(text)
@@ -74,13 +75,19 @@ def add_document(file_bytes: bytes, filename: str) -> int:
 
     # Embed all chunks locally
     embeddings = EMBED_MODEL.encode(chunks, show_progress_bar=False)
-    embeddings = np.array(embeddings, dtype="float32")
+    embeddings = [e.tolist() for e in embeddings]
 
-    # Create or update FAISS index
-    if _index is None:
-        _index = faiss.IndexFlatL2(EMBED_DIM)
+    # Generate unique IDs for each chunk
+    ids = [str(uuid.uuid4()) for _ in chunks]
 
-    _index.add(embeddings)
+    # Store in ChromaDB with metadata
+    _collection.add(
+        ids=ids,
+        embeddings=embeddings,
+        documents=chunks,
+        metadatas=[{"filename": filename} for _ in chunks],
+    )
+
     _chunks.extend(chunks)
     _doc_names.extend([filename] * len(chunks))
 
@@ -91,22 +98,22 @@ def add_document(file_bytes: bytes, filename: str) -> int:
 
 def retrieve_context(query: str, top_k: int = 3) -> str:
     """
-    Embed query → search FAISS → return top-k chunks joined as context string.
+    Embed query → search ChromaDB → return top-k chunks joined as context string.
     SRS 3.3: top 3 matching chunks appended to system prompt.
     Returns empty string if no documents have been uploaded.
     """
-    if _index is None or not _chunks:
+    if not _chunks:
         return ""
 
     query_vec = EMBED_MODEL.encode([query], show_progress_bar=False)
-    query_vec = np.array(query_vec, dtype="float32")
+    query_vec = [query_vec[0].tolist()]
 
-    distances, indices = _index.search(query_vec, top_k)
+    results = _collection.query(
+        query_embeddings=query_vec,
+        n_results=min(top_k, len(_chunks)),
+    )
 
-    retrieved = []
-    for idx in indices[0]:
-        if 0 <= idx < len(_chunks):
-            retrieved.append(_chunks[idx])
+    retrieved = results.get("documents", [[]])[0]
 
     if not retrieved:
         return ""
@@ -123,13 +130,14 @@ def get_store_info() -> dict:
     return {
         "total_chunks": len(_chunks),
         "documents": list(set(_doc_names)),
-        "has_documents": _index is not None and len(_chunks) > 0,
+        "has_documents": len(_chunks) > 0,
     }
 
 
 def clear_store():
-    """Clear all uploaded documents from memory."""
-    global _index, _chunks, _doc_names
-    _index = None
+    """Clear all uploaded documents from ChromaDB and memory."""
+    global _chroma_client, _collection, _chunks, _doc_names
+    _chroma_client.delete_collection("devassist_docs")
+    _collection = _chroma_client.get_or_create_collection(name="devassist_docs")
     _chunks = []
     _doc_names = []

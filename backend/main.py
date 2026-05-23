@@ -35,24 +35,32 @@ SYSTEM_PROMPT = (
     "When answering, use markdown formatting with proper code blocks and syntax highlighting."
 )
 
-# ── Document analysis prompt — generates real summary + balanced questions ────
+# ── Document analysis prompt — generates real summary + 10 balanced questions ─
 DOC_ANALYSIS_PROMPT = """You are an expert document analyst. Read the provided document text carefully and return ONLY a valid JSON object in this exact format, nothing else — no markdown, no explanation, no code fences:
 
 {
   "summary": "A detailed 4-6 sentence summary covering: what the document is, its purpose, key topics, and important details specific to this document.",
   "suggested_questions": [
-    "A clear, direct question about the main purpose or key rules of this document",
-    "A straightforward question about the rights or duties described",
-    "A practical question about a specific process or procedure mentioned",
-    "A simple question about important terms, conditions, or eligibility criteria"
+    "Question 1",
+    "Question 2",
+    "Question 3",
+    "Question 4",
+    "Question 5",
+    "Question 6",
+    "Question 7",
+    "Question 8",
+    "Question 9",
+    "Question 10"
   ]
 }
 
 Rules:
 - Summary must be informative and specific to this document's actual content — not generic.
-- Suggested questions must be easy to understand but specific to this document — not too simple (avoid "What is this document?") and not too complex (avoid multi-part analytical questions with "how does X relate to Y and what are the implications").
+- Generate EXACTLY 10 suggested questions.
+- Questions must be easy to understand but specific to this document — not too simple (avoid "What is this document?") and not too complex.
 - Good question difficulty level: a first-time reader of this document should be able to understand the question immediately and be curious to know the answer.
 - Questions should be short (under 15 words), clear, and directly answerable from the document.
+- Cover different sections and topics of the document across the 10 questions.
 - Do NOT ask questions that require cross-referencing multiple sections or deep legal/technical analysis.
 - Do NOT use generic questions like "What is this document about?" or "Summarize the key points".
 - Return ONLY the raw JSON object. No preamble, no markdown fences, no explanation."""
@@ -97,11 +105,11 @@ async def add_ngrok_header(request: Request, call_next):
     return response
 
 
-# ── Helper: generate real AI summary + smart questions from document ──────────
+# ── Helper: generate real AI summary + 10 smart questions from document ───────
 async def generate_doc_summary_and_questions(filename: str) -> dict:
     """
     Samples chunks from beginning, middle, and end of the uploaded document,
-    sends them to Groq, and returns a real AI-generated summary + smart questions.
+    sends them to Groq, and returns a real AI-generated summary + 10 smart questions.
     Falls back to generic values if Groq fails.
     """
     all_chunks = rag._chunks
@@ -115,6 +123,12 @@ async def generate_doc_summary_and_questions(filename: str) -> dict:
                 "What are the key rules or guidelines described?",
                 "What procedures or processes are outlined?",
                 "What rights or duties are mentioned?",
+                "Who is the intended audience of this document?",
+                "What are the eligibility criteria mentioned?",
+                "What are the important deadlines or timelines?",
+                "What terms and conditions are described?",
+                "What are the consequences of non-compliance?",
+                "What resources or references are provided?",
             ]
         }
 
@@ -144,7 +158,7 @@ async def generate_doc_summary_and_questions(filename: str) -> dict:
                 {"role": "system", "content": DOC_ANALYSIS_PROMPT},
                 {"role": "user", "content": f"Document filename: {filename}\n\nDocument content:\n\n{combined_text}"},
             ],
-            max_tokens=800,
+            max_tokens=1200,
             temperature=0.3,
         )
 
@@ -174,7 +188,7 @@ async def generate_doc_summary_and_questions(filename: str) -> dict:
 
         return {
             "summary": summary,
-            "suggested_questions": questions[:4],
+            "suggested_questions": questions[:10],
         }
 
     except Exception as e:
@@ -186,6 +200,12 @@ async def generate_doc_summary_and_questions(filename: str) -> dict:
                 "What are the key rules or guidelines described?",
                 "What procedures or processes are outlined?",
                 "What rights or duties are mentioned?",
+                "Who is the intended audience of this document?",
+                "What are the eligibility criteria mentioned?",
+                "What are the important deadlines or timelines?",
+                "What terms and conditions are described?",
+                "What are the consequences of non-compliance?",
+                "What resources or references are provided?",
             ]
         }
 
@@ -216,7 +236,7 @@ async def upload_file(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to process file: {str(e)}")
 
-    # Generate real AI summary + smart suggested questions after indexing
+    # Generate real AI summary + 10 smart suggested questions after indexing
     doc_analysis = await generate_doc_summary_and_questions(filename)
 
     return {
